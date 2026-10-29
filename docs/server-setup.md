@@ -189,6 +189,7 @@ sudo ufw status verbose
 | 03-ssh-hardened | 29.10.2026 12:08, после задания 2 | sshd на 2222, только ключи, AllowUsers devops |
 | 03b-ufw-dns | 29.10.2026 13:01, после заданий 3 и 4 | UFW (deny, LIMIT 2222, 80, 443), FQDN devops-vm.devops.local |
 | 04-nginx-https | 29.10.2026 14:32, ПР № 6, задание 2 | nginx, ресурс devops.local по HTTPS, перенаправление HTTP → HTTPS |
+| 05-docker-compose | 29.10.2026, ПР № 7, задание 2 | Docker Engine, проект ~/app: приложение + PostgreSQL, том app_db_data |
 
 ## 8. Веб-сервер
 
@@ -261,6 +262,73 @@ scripts/deploy.sh                                    # доставка site/ с
 curl --cacert ~/devops.crt -I https://devops.local   # 200 OK
 ```
 HSTS не включается (самоподписанный сертификат).
+
+## 9. Контейнеризация
+
+| Параметр | Значение |
+|---|---|
+| Docker Engine | 29.9.2 из официального репозитория `download.docker.com` (`/etc/apt/sources.list.d/docker.sources`, ключ `/etc/apt/keyrings/docker.asc`); пакет `docker.io` не используется |
+| Компоненты | containerd 2.4.2, runc 1.5.2, плагин Compose v5.6.1, buildx |
+| Группа docker | `devops` (имеет sudo). Участие в группе равносильно правам root — других пользователей не добавлять |
+| Проект | `/home/devops/app`, имя проекта Compose `app`; источник — каталог `app/` репозитория, доставка rsync |
+| Сервисы | `app` — образ `devops-app:1.0` (python:3.12-slim, gunicorn, пользователь `app` uid 999); `db` — `postgres:16-alpine`, healthcheck `pg_isready` |
+| Файл секретов | `/home/devops/app/.env`, владелец devops, права 600; создаётся только на сервере из `.env.example`, в репозиторий и на хост не копируется |
+| Публикуемые порты | `127.0.0.1:5000` → app:5000 (только для Nginx); порт 5432 не публикуется |
+| Сеть | `app_backend` (bridge), СУБД доступна приложению по имени `db` |
+| Тома | `app_db_data` → `/var/lib/postgresql/data`. `docker compose down -v` удаляет данные безвозвратно |
+| Обратный прокси | `location /app/` в блоке HTTPS `/etc/nginx/sites-available/devops-site` → `http://127.0.0.1:5000/` |
+
+```bash
+# [VM] Docker Engine
+sudo apt update && sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker devops     # затем новая SSH-сессия
+```
+
+```bash
+# [Хост, WSL] доставка проекта (без --chmod права 777 с /mnt/c попадут на сервер
+# и сбросят кэш сборки; без --exclude=.env флаг --delete удалит секреты)
+rsync -avz --delete --exclude=.env --chmod=D755,F644 app/ devops:app/
+```
+
+```bash
+# [VM] секреты и запуск
+cd ~/app
+cp .env.example .env
+chmod 600 .env
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+docker compose up -d --build
+docker compose ps                  # db — (healthy)
+sudo ss -tlnp | grep -E ':(5000|5432)\b'   # только 127.0.0.1:5000
+```
+
+Фрагмент блока `server { listen 443 ssl; ... }` в `/etc/nginx/sites-available/devops-site`:
+```nginx
+    location /app/ {
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+```
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl --cacert ~/devops.crt https://devops.local/app/health   # [Хост] ok
+```
+Публикация на `0.0.0.0` (`"5000:5000"`) не допускается: правила Docker в iptables обходят UFW.
 
 ## Контроль
 
