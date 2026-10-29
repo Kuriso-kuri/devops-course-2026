@@ -184,9 +184,10 @@ sudo ufw status verbose
 
 | Снимок | Момент создания | Состояние |
 |---|---|---|
-| 01-clean-install | 28.10.2026, после установки и `apt upgrade`, ВМ выключена | чистая система, пользователи student и matvei, sshd на 22 |
-| 02-keys-configured | 29.10.2026, после задания 1 | пользователь devops, вход по ключу |
-| 03-ssh-hardened | 29.10.2026, после задания 2 | sshd на 2222, только ключи, AllowUsers devops |
+| 01-clean-install | 28.10.2026 23:27, после установки и `apt upgrade`, ВМ выключена | чистая система, пользователи student и matvei, sshd на 22 |
+| 02-keys-configured | 29.10.2026 11:53, после задания 1 | пользователь devops, вход по ключу |
+| 03-ssh-hardened | 29.10.2026 12:08, после задания 2 | sshd на 2222, только ключи, AllowUsers devops |
+| 03b-ufw-dns | 29.10.2026 13:01, после заданий 3 и 4 | UFW (deny, LIMIT 2222, 80, 443), FQDN devops-vm.devops.local |
 
 ## Контроль
 
