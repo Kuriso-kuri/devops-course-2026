@@ -330,6 +330,53 @@ curl --cacert ~/devops.crt https://devops.local/app/health   # [Хост] ok
 ```
 Публикация на `0.0.0.0` (`"5000:5000"`) не допускается: правила Docker в iptables обходят UFW.
 
+## 10. Ansible
+
+Проект: `ansible/` в репозитории (ветка `feature/ansible`, далее `main`). Запуск — из каталога
+`ansible/`, где лежит `ansible.cfg` (`inventory = inventory/prod.ini`, `force_handlers = True`).
+
+| Узел | Роль | Описание |
+|---|---|---|
+| WSL Ubuntu 24.04 на хосте | управляющий | ansible-core 2.16, sshpass; репозиторий в `~/devops-course-2026` (не на `/mnt/c`) |
+| devops-vm, 192.168.56.101:22 (Host-only) | управляемый | Ubuntu Server 24.04, восстановлена к снимку `01-clean-install` |
+
+Inventory и учётные записи:
+
+| Файл | Пользователь | Аутентификация | Когда |
+|---|---|---|---|
+| `inventory/bootstrap.ini` | student | пароль (`--ask-pass --ask-become-pass`, через sshpass) | только первичный запуск |
+| `inventory/prod.ini` | devops | ключ `~/.ssh/devops_vm`, sudo NOPASSWD | все последующие запуски |
+
+Коллекции (`ansible/requirements.yml`): ansible.posix 1.6.2, community.docker 4.5.0, community.general 9.5.0.
+
+Роли (`site.yml`, `become: true`, порядок важен):
+
+| Роль | Ответственность |
+|---|---|
+| base | проверка ОС (Ubuntu 24.04 x86_64), базовые пакеты, python3-debian, python3-requests, официальный репозиторий Docker, Docker Engine |
+| ssh | пользователь devops, ключ, `/etc/sudoers.d/devops` (visudo), `/etc/ssh/sshd_config.d/00-ansible-hardening.conf` (sshd -t), UFW: deny incoming, allow 22 и 80 |
+| nginx | Nginx, reverse proxy `/etc/nginx/sites-available/devops-ci-app` → 127.0.0.1:5000, отключение default, handlers `nginx -t` + reload |
+| app | загрузка образа по полному SHA, контейнер `devops-ci-app` (unless-stopped, 127.0.0.1:5000:5000), ожидание `/health` |
+
+Приложение (`group_vars/all.yml`):
+
+- образ: `ghcr.io/kuriso-kuri/devops-ci-app` (публичный пакет GHCR из ПР № 10);
+- тег: `e6d1b6a3f58645f26f6724be2ccdbf7e573bfbd9` (полный SHA зелёного коммита main, digest
+  `sha256:b5e4937e206b5e894f6436b090442945fc8e674d3b12fef72cbcc312a5fd4847`); `latest` не используется;
+- порт контейнера 5000, опубликован только на 127.0.0.1:5000; снаружи — через Nginx на порту 80;
+- health endpoint: `GET /health` → `{"status":"ok"}`.
+
+Команды (`[Control]`, каталог `~/devops-course-2026/ansible`):
+```bash
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook -i inventory/bootstrap.ini site.yml --ask-pass --ask-become-pass   # первичный
+ansible-playbook site.yml                                                           # повторный, ожидается changed=0
+ansible-playbook verify.yml                                                         # read-only аудит
+curl --fail http://192.168.56.101/health
+```
+Смена версии — только изменением `app_tag` на полный SHA, опубликованный CI. Ручные правки на сервере
+не выполняются: расхождение устраняется повторным `ansible-playbook site.yml`.
+
 ## Контроль
 
 Скрипт `scripts/audit.sh` (запуск на сервере, код возврата 0 — конфигурация соответствует документу):
