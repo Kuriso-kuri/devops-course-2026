@@ -1,0 +1,6 @@
+---
+app_image: "ghcr.io/kuriso-kuri/devops-ci-app"
+app_tag: "e6d1b6a3f58645f26f6724be2ccdbf7e573bfbd9"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
